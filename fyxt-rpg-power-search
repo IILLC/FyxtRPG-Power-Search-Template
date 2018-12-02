@@ -1,0 +1,1115 @@
+<!-- Template Name-->
+<?php
+/*
+Template Name: Power Search template for FYXT
+*/
+?>
+<!-- Template Name-->
+<!-- BEGIN add begining custom code here ----------------------BEGIN------------------------------------------------------->
+
+<?php
+function add_scripts(){
+	wp_enqueue_script( 'jquery-ui-autocomplete' );
+	wp_enqueue_script( 'tags-script', get_stylesheet_directory_uri() . '/js/tagmanager-master/tagmanager.js' );
+	wp_enqueue_style( 'tags-custom', get_stylesheet_directory_uri() . '/js/tagmanager-master/tagmanager.css' );
+}
+	add_action( 'wp_enqueue_scripts', 'add_scripts' );
+	
+global $wpdb;
+get_currentuserinfo(); 
+$fyxtAccountID = intval( $current_user->ID ); //fyxt account
+if ( $fyxtAccountID > 0 ) { //run this code if user is logged in
+	$debug = debug( $fyxtAccountID );
+	get_userdata( $fyxtAccountID );
+	$displayName = $current_user->display_name;
+	if ( isset( $_GET['charID'] ) ){
+		$charID = intval( $_GET['charID'] );
+	}
+	$okToEdit = isAllowedEdit( $charID, $fyxtAccountID ) ;
+	//$totalAccountChars = fyxt_AccountAllCharCount ($fyxtAccountID) ;
+	$isSub = isUserSub();
+	$isSuperMod = fyxt_isSuperMod( $fyxtAccountID );
+
+	//checks accounts PC status/////////////////////////////////////////////////
+		$myCharListResults = fyxt_myCharactersBasicList( $fyxtAccountID );
+		$charCount = count( $myCharListResults );
+		$charInfo = fyxt_AccountOptLimit( $fyxtAccountID,1 ); //account ID, Option ID
+		$charLimit = $charInfo["total"];
+		if ( $charCount >= $charLimit ){
+			$tooManyPC = 1;
+		}
+		else {
+			$tooManyPC = 0;
+		}
+	
+	////////////////////////////////////////////////////////////////////////////////
+	
+	//checks accounts NPC status ///////////////////////////////////////////////////
+		$myNPCCharListResults = fyxt_myNPCharactersBasicList( $fyxtAccountID );
+		$npcCount = count( $myNPCCharListResults );
+		$npcInfo = fyxt_AccountOptLimit ( $fyxtAccountID,9 ); //account ID, Account Option ID
+		$npcLimit = $npcInfo["total"];
+		if ( $npcCount >= $npcLimit ){
+			$tooManyNPC = 1;
+		}
+		else {
+			$tooManyNPC = 0;
+		}
+	/////////////////////////////////////////////////////////////////////////////////
+} else {
+	$fyxtAccountID = -1 ;	
+}
+ //closes beginning code to run if logged in
+
+if ( $charID > 0 ) {
+	$isNPC = isNPC( $charID );
+	$basicCharSQL = "
+	Select
+	  fyxt_characters.character_name,
+	  fyxt_characters.char_focus
+	From
+	  fyxt_characters
+	Where
+	  fyxt_characters.idfyxt_character = $charID";
+	$basicCharInfo = $wpdb->get_row( $basicCharSQL );
+	$charName = stripslashes( $basicCharInfo->character_name );
+	//get character pri power cap
+	
+	if ( $isNPC == 0 ) {
+		$charL1Info = getCharLvl1Info( $charID );
+		$charLvl = curBaseCharLvl( $charID );
+		$priPowerName = 'Primary';
+	}
+	elseif ( $isNPC == 1 ) {
+		$charL1Info = getNPCInfo( $charID );
+		$charLvl = curBaseNPClvl( $charID );
+		$priPowerName = 'Signature';		
+	}
+	
+	$baseCSLevel = $charLvl;
+	
+	//Get all character mods and stick them in arrays to add up/calc etc
+	$bonusEffectIDs = findEffectArray ( 0,1 );
+	$penaltyEffectIDs = findEffectArray ( 1,0 );
+	
+	$charItemEffectIDs = findCharItemEffects( $charID );
+	if ( $isNPC == 1 ) {//!!!!!!!!! NPC SPEC EFFECTS ADD HERE 
+		//NPC CODE HERE
+		$charSpecEffectsIDs = findNPCCharSpecEffects( $charID );
+	} else {
+		$charSpecEffectsIDs = findCharSpecEffects( $charID ); 
+	}
+	$charGMEffectsIDs = findCharGMModEffects( $charID );
+	
+	$finalLevel = $baseCSLevel 
+					+ checkBonus( 97,$charID,$charItemEffectIDs,$charSpecEffectsIDs,$charGMEffectsIDs ) 
+					+ checkPenalty( 98,$charID,$charItemEffectIDs,$charGMEffectsIDs ); 
+	$bCharTier = curBaseCharTier( $finalLevel );
+	$finalTier  = $bCharTier 
+					+ checkBonus( 99,$charID,$charItemEffectIDs,$charSpecEffectsIDs,$charGMEffectsIDs ) 
+					+ checkPenalty( 100,$charID,$charItemEffectIDs,$charGMEffectsIDs );
+	$tBody = totalTrait( $charID,1 ); //total base BODY trait
+	$finalBody  = $tBody 
+					+ checkBonus( 61,$charID,$charItemEffectIDs,$charSpecEffectsIDs,$charGMEffectsIDs ) 
+					+ checkPenalty( 62,$charID,$charItemEffectIDs,$charGMEffectsIDs );
+	$tMind = totalTrait( $charID,2); //total base MIND trait
+	$finalMind  = $tMind 
+					+ checkBonus( 63,$charID,$charItemEffectIDs,$charSpecEffectsIDs,$charGMEffectsIDs ) 
+					+ checkPenalty( 64,$charID,$charItemEffectIDs,$charGMEffectsIDs );
+	$tSpirit = totalTrait( $charID,3); //total base SPIRIT trait
+	$finalSpirit  = $tSpirit 
+					+ checkBonus( 65,$charID,$charItemEffectIDs,$charSpecEffectsIDs,$charGMEffectsIDs ) 
+					+ checkPenalty( 66,$charID,$charItemEffectIDs,$charGMEffectsIDs );
+	
+	/////// Primary Power Point Calcs
+	// sets the triat to be used for base power points
+		if ( $charL1Info->char_archetype == 1 ){
+			$priDiscTrait = $finalBody;
+		} elseif ( $charL1Info->char_archetype == 2 ){
+			$priDiscTrait = $finalSpirit;
+		} elseif ( $charL1Info->char_archetype == 3 ){
+			$priDiscTrait = $finalMind;
+		}
+	$finalTotalPrimaryPowerPoints = getBasePowerPoints ( 'pri',$charL1Info->char_focus, $finalLevel ) + $priDiscTrait
+						+ checkBonus( 71,$charID,$charItemEffectIDs,$charSpecEffectsIDs,$charGMEffectsIDs ) 
+						+ checkPenalty( 72,$charID,$charItemEffectIDs,$charGMEffectsIDs );
+	$finalTotalPrimaryPowerCap = floor( $finalTotalPrimaryPowerPoints/2 )
+						+ checkBonus( 148,$charID,$charItemEffectIDs,$charSpecEffectsIDs,$charGMEffectsIDs ) 
+						+ checkPenalty( 149,$charID,$charItemEffectIDs,$charGMEffectsIDs );
+						
+	//gets and Checks CHARACTER Powers numbers  /////////////////////////////////////////////////
+	$charTotalPowersSQL = "
+	Select
+	  Count(fyxt_char_powers.idfyxt_char_powers) as charPowerCount
+	From
+	  fyxt_char_powers
+	Where
+	  fyxt_char_powers.idfyxt_character = $charID"; 
+	$charTotalPowersResult = $wpdb->get_var( $charTotalPowersSQL );
+	$charPowerInfo = fyxt_AccountOptLimit( $fyxtAccountID,15 ); //account ID, Option ID 
+	$charPowerLimit = $charPowerInfo["total"]; 
+	if ( $charTotalPowersResult >= $charPowerLimit ){
+		$tooManyPower = 1;
+	} else {
+		$tooManyPower = 0;
+	}
+	
+	/////////////////////////////////////////////////////////////////////////////////
+} else {
+		$charLvl = 20;
+}
+
+// Level Filter
+$levelFilter = 20;
+if ( $charID > 1 ) {
+	$levelFilter = $finalLevel;
+} elseif ( isset( $_GET['slctMaxLevel'] ) ) {
+  $levelFilter = $_GET['slctMaxLevel'];
+}
+
+// Cost Filters
+if ( ( $charID > 1 ) && ( !isset( $_GET['nrbxLowPP'] ) ) ){
+	$hCost = $finalTotalPrimaryPowerCap;
+	$lCost = round($hCost/2);
+} elseif ( isset( $_GET['nrbxLowPP'] ) ) {
+	$lCost = $_GET['nrbxLowPP'];
+	$hCost = $_GET['nrbxHighPP'];
+} else {
+	$lCost = 1;
+	$hCost = 1000;
+}
+
+if ( ( isset( $_GET['charID'] ) ) || ( isset( $_GET['slctMaxLevel'] ) ) ) {
+	// Name Filter
+	if ( isset( $_GET['txbxPowerName'] ) ) {
+	  $nameFilter = $_GET['txbxPowerName'];
+	} else {
+		$nameFilter = '';
+	}
+	
+	// Description Filter
+	if ( isset( $_GET['txbxPowDesc'] ) ) {
+	  $descFilter = $_GET['txbxPowDesc'];
+	} else {
+		$descFilter = '';
+	}
+	
+	//Power Effect Filter
+	if ( isset( $_GET['txbxEffName'] ) ) {
+		$eFilter = $_GET['txbxEffName'];
+	}
+	
+	//Discipline Filter //$charL1Info->fyxt_archetype_name
+	if ( ( $charID > 1 ) && ( !isset( $_GET['slctDisc'] ) ) ){
+		$archeFilter = $charL1Info->fyxt_archetype_name;
+	} elseif ( isset( $_GET['slctDisc'] ) ) {
+		$archeFilter = $_GET['slctDisc'];
+	} else {
+		$archeFilter = '';
+	}
+	
+	//Aggression Filter  //$charL1Info->fyxt_style_name
+	if ( ( $charID > 1 ) && ( !isset( $_GET['slctAgg'] ) ) ) {
+		if ( $charL1Info->fyxt_style_name == 'Aggressor' ){ //Agressor
+			$aggFilter = 'Offensive';
+		} elseif ( $charL1Info->fyxt_style_name == 'Protector' ){ //Protector
+			$aggFilter = 'Defensive';
+		} else { //Agressor
+			$aggFilter = '';
+		}
+	} elseif ( isset( $_GET['slctAgg'] ) ){
+		$aggFilter = $_GET['slctAgg'];
+	} else {
+		$aggFilter = '';
+	}
+	
+	//Tactical Target Filter //$charL1Info->fyxt_char_tactical_target_name
+	if ( ( $charID > 1 ) && ( !isset( $_GET['slctTT'] ) ) ){
+		$ttFilter = $charL1Info->fyxt_char_tactical_target_name;
+	} elseif ( isset($_GET['slctTT'] ) ){
+		$ttFilter = $_GET['slctTT'];
+	} else {
+		$ttFilter = "Both";
+	}
+	
+	if ( $ttFilter == "Both" ){
+		$ttSQL = '>= 0';
+	} elseif ( $ttFilter == "Many" ){
+		$ttSQL = '> 4';
+	} elseif ( $ttFilter == "Single" ){
+		$ttSQL = '< 5';
+	}
+	
+	//Tactical Range Filter //$charL1Info->fyxt_char_tacticle_range_name
+	if ( ( $charID > 1 ) && ( !isset( $_GET['slctTR'] ) ) ){
+		$trFilter = $charL1Info->fyxt_char_tacticle_range_name;
+	} elseif (isset($_GET['slctTR'])){
+		$trFilter = $_GET['slctTR'];
+	} else {
+		$trFilter = "Both";
+	}
+	
+	if ( $trFilter == "Both" ){
+		$trSQL = '>= 0';
+	} elseif ( $trFilter == "Far" ){
+		$trSQL = '> 4';
+	} elseif ( $trFilter == "Close" ){
+		$trSQL = '< 5';
+	}
+	
+	if ( $isSub == 1 ) {
+		$isSubSQL = '2';
+	} else {
+		$isSubSQL = '1';
+	}
+	
+	//need to build an IN for SQL below where user ID is.
+	if ( !empty( $fyxtAccountID ) ) { $friendList = fyxt_friendList ( $fyxtAccountID ); }
+	if ( !empty( $friendList ) ){
+		array_push( $friendList,0 ); //adds "FYXT" powers
+		$friendListINSQL = implode( ",",$friendList );
+	} else {
+		$friendListINSQL = '0';
+	}
+
+//tag filter - adds some stuff to SQL statement if tags present. If not, leaves them blank
+if ( !empty( $_GET['hidden-tags'] ) ){
+	//get valid tag id string
+	$tagString = $_GET['hidden-tags'];
+	$tagArray = explode( ",",$tagString );
+	$tagIDsCommaString = "";
+	$i = 1;
+	foreach ( $tagArray as $key => $value ){
+		$idSQL = "
+			SELECT
+			  fyxt_tax_list.tax_id
+			FROM
+			  fyxt_tax_list
+			WHERE
+			  fyxt_tax_list.tax_term = '$value'";
+		$idResults = $wpdb->get_var( $idSQL );
+		$tagIDsCommaString .= $idResults;
+		if ( $i != count( $tagArray ) ){
+			$tagIDsCommaString .= ',';
+		}
+		$i++;
+	}
+	
+	$existingTags = str_replace( ',','","',$_GET['hidden-tags'] );
+	
+	//create in statements
+	$whereTagsIn = "AND fyxt_tax_object_tags.tax_id IN ($tagIDsCommaString) 
+					AND fyxt_tax_object_id_association.object_type_id = 3";
+} else {
+	$whereTagsIn = "";
+	$existingTags ="";
+}	
+	
+	
+// Step 1 Main Search SEARCH SQL
+	$search1SQL = "
+	Select
+	  fyxt_powers.idpowers,
+	  fyxt_powers.total_cost
+	From
+	  fyxt_power_effects As fyxt_power_effects Inner Join
+	  fyxt_powers As fyxt_powers On fyxt_power_effects.power_id =
+		fyxt_powers.idpowers Left Join
+	  fyxt_target_list As fyxt_target_list
+		On fyxt_target_list.idtarget_list = fyxt_powers.targets Left Join
+	  fyxt_power_duration_list As fyxt_power_duration_list
+		On fyxt_power_duration_list.idpower_duration_list = fyxt_powers.duration
+	  Left Join
+	  fyxt_range_list As fyxt_range_list
+		On fyxt_range_list.idrange_list = fyxt_powers.prange Inner Join
+	  fyxt_power_effects_list As fyxt_power_effects_list
+		On fyxt_power_effects_list.idpower_effects_list =
+		fyxt_power_effects.effects_id Left Join
+	  fyxt_discipline_list
+		On fyxt_discipline_list.idfyxt_discipline_list =
+		fyxt_powers.archetype_discipline Inner Join
+	  fyxt_o_d_list
+		On fyxt_o_d_list.idfyxt_o_d_list = fyxt_powers.o_or_d
+		LEFT JOIN fyxt_tax_object_id_association ON fyxt_tax_object_id_association.object_id = fyxt_powers.idpowers
+  LEFT JOIN fyxt_tax_object_tags ON fyxt_tax_object_tags.object_id = fyxt_tax_object_id_association.tax_object_id
+	Where
+	  ((fyxt_powers.wp_userid = $fyxtAccountID) Or
+	  (fyxt_powers.verified = 1 And
+	  fyxt_powers.web_include = 1 And
+	  fyxt_powers.fyxt_power_public = 1) Or
+	  (fyxt_powers.wp_userid In ($friendListINSQL) And
+	  fyxt_powers.fyxt_power_public = 1))
+	  $whereTagsIn
+	Group By
+	  fyxt_powers.idpowers, fyxt_powers.name, fyxt_powers.power_description,
+	  fyxt_o_d_list.o_d_name,
+	  fyxt_discipline_list.fyxt_discipline_name,
+	  fyxt_target_list.target_cost, fyxt_powers.prange, fyxt_powers.creator_user_id
+	Having
+	  fyxt_powers.name Like '%$nameFilter%' And
+	  fyxt_powers.power_description Like '%$descFilter%' And
+	  fyxt_o_d_list.o_d_name Like '%$aggFilter%' And
+	  fyxt_discipline_list.fyxt_discipline_name Like '%$archeFilter%' And
+	  fyxt_target_list.target_cost $ttSQL And
+	  fyxt_powers.prange $trSQL And
+	  fyxt_powers.total_cost Between $lCost And $hCost
+	Order By
+	  fyxt_powers.idpowers";
+	$search1Results = $wpdb->get_col( $search1SQL );  
+	
+	//Part 2 for Seach, finds level Power IDs
+	$search2SQL = "
+	Select
+	  fyxt_power_effects.power_id,
+	  Max(fyxt_power_effects_list.effect_lvl_req)
+	From
+	  fyxt_power_effects Inner Join
+	  fyxt_power_effects_list
+		On fyxt_power_effects_list.idpower_effects_list =
+		fyxt_power_effects.effects_id
+	Group By
+	  fyxt_power_effects.power_id
+	Having
+	  Max(fyxt_power_effects_list.effect_lvl_req) <= $levelFilter";
+	$search2Results = $wpdb->get_col( $search2SQL );  
+	
+	$findPowerIDsInfo = array_intersect( $search1Results,$search2Results );
+	
+	if ( !empty( $eFilter )){
+		//Part 3 for Search, finds Power ID's accoding to Effect
+		$search3SQL = "
+		Select
+		  fyxt_power_effects.power_id
+		From
+		  fyxt_power_effects Inner Join
+		  fyxt_power_effects_list
+			On fyxt_power_effects_list.idpower_effects_list =
+			fyxt_power_effects.effects_id
+		Where
+		  fyxt_power_effects_list.effect_name Like '%$eFilter%'";
+		$search3Results = $wpdb->get_col( $search3SQL );
+		$findPowerIDsInfo = array_intersect( $findPowerIDsInfo,$search3Results );
+	}
+
+	//pagination
+	$row = count( $findPowerIDsInfo );
+	$page_rows = 20;
+	$last = ceil( $row/$page_rows );
+	
+	if( $last < 1 ){
+		$last = 1;
+	}
+	
+	$pagenum = 1;
+	
+	if( isset ($_GET['pn'] ) ){
+		$pagenum = $_GET['pn']; // preg_replace('#[^0-9]#', '', 
+	}
+	
+	if ( $pagenum < 1 ) { 
+		$pagenum = 1; 
+	} else if ( $pagenum > $last ) { 
+		$pagenum = $last; 
+	}
+	
+	function removeqsvar( $url, $varname ) {
+    return preg_replace( '/([?&])'.$varname.'=[^&]+(&|$)/','$1',$url );
+	}
+	$url = $_SERVER['REQUEST_URI'];
+	$varname = 'pn';
+	$newURL = removeqsvar( $url, $varname );
+	$newURL = rtrim( $newURL, '&' );
+	$limit = 'LIMIT ' .($pagenum - 1) * $page_rows .',' .$page_rows;
+	$finalPowerIDsSQL = implode(",",$findPowerIDsInfo);
+
+	if (!empty($finalPowerIDsSQL)){	  
+		$finalPowerInfoSQL = "
+		Select
+		  fyxt_powers.idpowers,
+		  fyxt_powers.name,
+		  fyxt_powers.power_description,
+		  fyxt_range_list.target_range,
+		  fyxt_target_list.target_name,
+		  fyxt_power_duration_list.duration_name,
+		  fyxt_powers.o_or_d,
+		  fyxt_o_d_list.o_d_name,
+		  fyxt_powers.total_cost,
+		  fyxt_discipline_list.fyxt_discipline_name,
+		  fyxt_powers.web_include,
+		  fyxt_powers.optional_power,
+		  fyxt_range_list.target_range_name
+		From
+		  fyxt_power_effects As fyxt_power_effects Right Join
+		  fyxt_powers As fyxt_powers On fyxt_power_effects.power_id =
+			fyxt_powers.idpowers Left Join
+		  fyxt_target_list As fyxt_target_list On fyxt_target_list.idtarget_list =
+			fyxt_powers.targets Left Join
+		  fyxt_power_duration_list As fyxt_power_duration_list
+			On fyxt_power_duration_list.idpower_duration_list = fyxt_powers.duration
+		  Left Join
+		  fyxt_range_list As fyxt_range_list On fyxt_range_list.idrange_list =
+			fyxt_powers.prange Left Join
+		  fyxt_power_effects_list As fyxt_power_effects_list
+			On fyxt_power_effects_list.idpower_effects_list =
+			fyxt_power_effects.effects_id Left Join
+		  fyxt_discipline_list On fyxt_discipline_list.idfyxt_discipline_list =
+			fyxt_powers.archetype_discipline Left Join
+		  fyxt_o_d_list On fyxt_o_d_list.idfyxt_o_d_list = fyxt_powers.o_or_d
+		Group By
+		  fyxt_powers.idpowers, fyxt_powers.name, fyxt_powers.power_description,
+		  fyxt_range_list.target_range, fyxt_o_d_list.o_d_name,
+		  fyxt_discipline_list.fyxt_discipline_name, fyxt_powers.web_include,
+		  fyxt_range_list.target_range_name, fyxt_powers.creator_user_id
+		Having
+		  fyxt_powers.idpowers In ($finalPowerIDsSQL)
+		Order By
+		  fyxt_powers.name,
+		  fyxt_powers.total_cost
+		$limit";
+		$powerListResults = $wpdb->get_results( $finalPowerInfoSQL );
+	}
+	
+	// This shows the user what page they are on, and the total number of pages
+	$textline1 = "Powers Found (<b>$row</b>)";
+	$textline2 = "Page <b>$pagenum</b> of <b>$last</b>";
+	$paginationCtrls = '';
+	if( $last != 1 ){
+		if ( $pagenum > 1 ) {
+			$previous = $pagenum - 1;
+			$paginationCtrls .= '<a href="'.$newURL.'&pn='.$previous.'">Previous</a> &nbsp; &nbsp; ';
+			for( $i = $pagenum-4; $i < $pagenum; $i++ ){
+				if($i > 0){
+					$paginationCtrls .= '<a href="'.$newURL.'&pn='.$i.'">'.$i.'</a> &nbsp; ';
+				}
+			}
+		}
+		$paginationCtrls .= ''.$pagenum.' &nbsp; ';
+		for( $i = $pagenum+1; $i <= $last; $i++ ){
+			$paginationCtrls .= '<a href="'.$newURL.'&pn='.$i.'">'.$i.'</a> &nbsp; ';
+			if( $i >= $pagenum+4 ){
+				break;
+			}
+		}
+		
+		if ( $pagenum != $last ) {
+			$next = $pagenum + 1;
+			$paginationCtrls .= ' &nbsp; &nbsp; <a href="'.$newURL.'&pn='.$next.'">Next</a> ';
+		}
+	}	
+} else {
+	
+	//Power List Results SQL  For RANDOM RESULTS 20
+	$powerListSQL = "
+	Select
+	  fyxt_powers.idpowers,
+	  fyxt_powers.name,
+	  fyxt_powers.power_description,
+	  fyxt_range_list.target_range,
+	  fyxt_target_list.target_name,
+	  fyxt_power_duration_list.duration_name,
+	  fyxt_powers.o_or_d,
+	  fyxt_o_d_list.o_d_name,
+	  fyxt_powers.total_cost,
+	  fyxt_discipline_list.fyxt_discipline_name,
+	  fyxt_power_effects_list.battle_time,
+	  fyxt_powers.web_include,
+	  fyxt_powers.optional_power,
+  	  fyxt_power_effects_list.turn_time,
+	  fyxt_power_effects_list.real_time,
+	  fyxt_range_list.target_range_name
+	From
+	  fyxt_power_effects As fyxt_power_effects Inner Join
+	  fyxt_powers As fyxt_powers On fyxt_power_effects.power_id =
+		fyxt_powers.idpowers Left Join
+	  fyxt_target_list As fyxt_target_list
+		On fyxt_target_list.idtarget_list = fyxt_powers.targets Left Join
+	  fyxt_power_duration_list As fyxt_power_duration_list
+		On fyxt_power_duration_list.idpower_duration_list = fyxt_powers.duration
+	  Left Join
+	  fyxt_range_list As fyxt_range_list
+		On fyxt_range_list.idrange_list = fyxt_powers.prange Inner Join
+	  fyxt_power_effects_list As fyxt_power_effects_list
+		On fyxt_power_effects_list.idpower_effects_list =
+		fyxt_power_effects.effects_id Left Join
+	  fyxt_discipline_list
+		On fyxt_discipline_list.idfyxt_discipline_list =
+		fyxt_powers.archetype_discipline Inner Join
+	  fyxt_o_d_list
+		On fyxt_o_d_list.idfyxt_o_d_list = fyxt_powers.o_or_d
+	Where
+	  fyxt_powers.web_include = 1 And
+	  fyxt_powers.verified = 1
+	Group By
+	  fyxt_powers.idpowers, fyxt_powers.name, fyxt_powers.power_description,
+	  fyxt_range_list.target_range, fyxt_o_d_list.o_d_name,
+	  fyxt_discipline_list.fyxt_discipline_name,
+	  fyxt_power_effects_list.battle_time, fyxt_powers.web_include,
+	  fyxt_powers.creator_user_id
+	Having
+	  fyxt_powers.name Not Like '%Base Power%'
+	Order By
+		Rand()
+	Limit 20";
+	$powerListResults = $wpdb->get_results( $powerListSQL );
+}
+
+?>
+
+<!-- END -------------------------------------------------------------------------------------------------------------------- Page stuff at top-->
+<?php do_action( '__before_main_wrapper' ); ##hook of the header with get_header ?>
+<div id="main-wrapper" class="<?php echo implode(' ', apply_filters( 'tc_main_wrapper_classes' , array('container') ) ) ?>">
+
+    <?php do_action( '__before_main_container' ); ##hook of the featured page (priority 10) and breadcrumb (priority 20)...and whatever you need! ?>
+
+    <div class="container" role="main">
+        <div class="<?php echo implode(' ', apply_filters( 'tc_column_content_wrapper_classes' , array('row' ,'column-content-wrapper') ) ) ?>">
+
+            <?php do_action( '__before_article_container'); ##hook of left sidebar?>
+
+                <div id="content" class="<?php echo implode(' ', apply_filters( 'tc_article_container_class' , array( CZR_utils::czr_fn_get_layout( CZR_utils::czr_fn_id() , 'class' ) , 'article-container' ) ) ) ?>">
+
+                    <?php do_action ('__before_loop');##hooks the heading of the list of post : archive, search... ?>
+
+                        <?php if ( czr_fn__f('__is_no_results') || is_404() ) : ##no search results or 404 cases ?>
+
+                            <article <?php czr_fn__f('__article_selectors') ?>>
+                                <?php do_action( '__loop' ); ?>
+                            </article>
+
+                        <?php endif; ?>
+
+                        <?php if ( have_posts() && ! is_404() ) : ?>
+                            <?php while ( have_posts() ) : ##all other cases for single and lists: post, custom post type, page, archives, search, 404 ?>
+                                <?php the_post(); ?>
+
+                                <?php do_action ('__before_article') ?>
+                                    <article <?php czr_fn__f('__article_selectors') ?>>
+										<?php do_action( '__loop' ); ?>
+                                    </article>
+<!-- START ------------------------------------------------------------------------------------------------------------------------- Page stuff afer Post Text -->
+
+
+<!-- START JAVASCRIPT SIDE OF AJAX HANDELING FOR ADD REQUESTS -->
+<input id="hdnCharID" type="hidden" value="<?php echo $charID ?>"/>
+
+<?php 
+add_action( 'admin_footer', 'addPowerAJAX_javascript' );
+
+function addPowerAJAX_javascript() {
+	$adminAJAX =  admin_url( 'admin-ajax.php' ); 
+?>
+<script type="text/javascript" language="JavaScript">
+jQuery( document ).ready( function( $ ) { 	
+    $( "button[name=btnAddPower]" )  
+      .button()
+      .click( function( event ) {
+        event.preventDefault();
+		var confirmAction = confirm('Are you sure you want to add this Power to your character?');
+		if ( confirmAction == true ) {
+	// build data for AJAX call
+			var cID = $( '#hdnCharID' ).val();
+			cID = cID * 1;
+			var thisValue = $( this ).val();
+			var pID = $( this ).prev( 'input[id="hdnPowerID"]' ).val();
+			pID = pID*1;
+			$( '#spnPowerMessage'+pID ).html( '<i class="fa fa-spinner fa-pulse fa-2x"></i>' );
+	
+			if ( thisValue == "A" ) {
+				var aDisc = 0;
+			} else {
+				var aDisc = thisValue;
+				}
+			aDisc = aDisc * 1;
+			var ajaxurl = <?php echo json_encode( $adminAJAX ); ?>;
+			var data = {
+						action: 'addPowerAJAX',
+						charID: cID,
+						powerID: pID,
+						pDisc: aDisc
+					   };
+			$.post( ajaxurl, data, function( response ) {
+				$( '#spnPowerMessage'+pID ).html( '<div class="alert alert-success" role="alert">This Power has been added to your character!</div>' );
+			});
+		} else {
+			console.log('Add Power was aborted.');
+		}
+      });
+
+});
+</script>
+
+<?php 
+}; 
+addPowerAJAX_javascript();
+?>
+<script type="text/javascript" language="JavaScript">
+//EDIT POWER button looks and actions
+		jQuery( document ).ready( function( $ ) {
+			$( "button[name=btnEditPower]" )  
+				.button()
+				.click( function( event ) {
+					event.preventDefault();
+					var bVal = $( this ).val();
+					if (bVal != 'example') {
+						var pID = $( this ).prev( 'input[id="hdnpowerID"]' ).val();
+						cID = pID * 1;
+						var url = '../../fyxt-rpg-tools/power-generator/?powerID='+ pID;
+						window.open(url,'_blank');					
+					} else {
+						alert('You clicked a button. Hooray!');
+					}
+				});
+		});
+</script>
+<!-- END JAVASCRIPT SIDE OF AJAX HANDELING FOR ADD REQUESTS -->
+
+<?php	if ( empty( $charID ) && $fyxtAccountID > 0) { // Show if logged in and no characters ?>
+        	<div class="post-bodycopy clearfix">
+            	There are no Fyxt RPG characters currently selected. You can still browse Fyxt RPG Powers. However you will be unable to add any Powers to a character until one is selected.
+             	<p>Use the <a href="#mycharacters" title="Click here to go down to the Character List.">Character List</a> at the bottom of the page to change characters.</p>
+            </div>
+<?php } // end show if logged in and no characters ?>
+					
+<?php if ( !empty( $charID )) { // Show if recordset empty ?>
+<div class="post-bodycopy clearfix">
+
+<?php 	if ( $tooManyPower == 1 ) { ?>
+			<span class="warning_cell_big_s" id="warning_cell_big_s"><p><em>This character has reached or exceeded their current Fyxt RPG Power cap.</em></p></span>
+            <p>Editing and rearranging Fyxt RPG Powers is still available on this character.</p>
+            <p>To gain more room <a href="../../fyxt-rpg-account/fyxt-rpg-member-levels/" title="Higher Fyxt RPG subscriptions have more room for Powers!">subscribe to the Fyxt RPG</a> at a higher membership level or remove some Powers from this character to add new Powers.</p>
+<?php	} else { ?>
+            <div class="alert alert-success" role="alert"><h2><?php echo $charName ?> successfully loaded into the Power Search Tool</h2></div>
+            <p> The search filters have been initially set to match this characters primary choices. You can easily add Powers to <strong><?php echo $charName ?></strong> by clicking one of the buttons next to the desired Power. Click the <strong>A</strong> button
+              to add to your At Will set. Click the <strong>1</strong>, <strong>2</strong>, or <strong>3</strong> buttons to add to <strong><?php echo $charName ?></strong>'s  Primary, Secondary, or Tertiary Power sets respectively. Use the <a href="#mycharacters" title="Click here to go down to the Character List.">Character List</a> at the bottom of the page to change characters.</p> 
+            <p><em>Tip</em>: Open another window for the <a href="../../fyxt-rpg-tools/character-sheet/?charID=<?php echo $charID ?>" title="Click to open a character sheet in another window." target="new">Fyxt Character Sheet</a> and go to the Powers tab and click Edit Powers. Make sure all of the choices for <strong><?php echo $charName ?></strong> are OK and are not causing any problems. Refresh the Edit Powers pages whenever a change is made to Powers here. You can also make other customizations to the Powers you have added on the Edit Powers page.</p>
+<?php } //ends switch if there are too many Powers on the character ?>    
+</div>
+<?php } // Show if recordset empty ?>
+
+
+<div class="char_stat_block_title" id="first_title"><span title="Use the filters below to narrow your Fyxt RPG Power search.">Fyxt RPG Power Filters</span></div> 
+<span title="Click Reset Search to clear out all search filters."><a href="../../fyxt-rpg-tools/fyxt-power-database-search/" title="Click to clear all filters and start over.">Reset Search</a></span>
+<div id="first_block" class="char_stat_block">
+	<div class="row-fluid">
+        <div class="span4">
+        	<table width="100%" border="0" cellpadding="0" cellspacing="0" class="stats_table" id="stats_table">
+            	<tr>
+                	<td class="cs_label" id="cs_label">Combatant Powers</td>
+                    <td class="cs_stat" id="cs_stat"><?php echo fetchPowerNumber(1,4,7) ?></td>
+                </tr>
+                <tr>
+                	<td class="cs_label" id="cs_label">Standard Fyxt RPG Powers</td>
+        			<td class="cs_stat" id="cs_stat"><?php echo fyxt_countStandardPowers('= 0') ?></td>
+                </tr>
+            </table>
+        </div>
+        <div class="span4">
+        	<table width="100%" border="0" cellpadding="0" cellspacing="0" class="stats_table" id="stats_table">
+            	<tr>
+                	<td class="cs_label" id="cs_label">Generalist Powers</td>
+        			<td class="cs_stat" id="cs_stat"><?php echo fetchPowerNumber(2,5,7) ?></td>
+                </tr>
+                <tr>
+                	<td class="cs_label" id="cs_label">Advanced Fyxt RPG Powers</td>
+        			<td class="cs_stat" id="cs_stat"><?php echo fyxt_countStandardPowers('= 1') ?></td>
+                </tr>
+            </table>
+        </div>
+        <div class="span4">
+        	<table width="100%" border="0" cellpadding="0" cellspacing="0" class="stats_table" id="stats_table">
+            	<tr>
+                	<td class="cs_label" id="cs_label">Mystic Powers</td>
+        			<td class="cs_stat" id="cs_stat"><?php echo fetchPowerNumber(3,6,7) ?></td>
+                </tr>
+                <tr>
+                	<td class="cs_label" id="cs_label">Total Fyxt RPG Powers</td>
+		        	<td class="cs_stat" id="cs_stat"><?php echo fyxt_countStandardPowers('< 2') ?></td>
+                </tr>
+            </table>
+        </div>
+	</div>
+					</div>
+					<div id="first_block" class="char_stat_block">
+
+<?php	if ( $isSub == 1 ) { ?>
+			<div class="alert alert-success" role="alert">Enjoy Advanced Fyxt RPG Powers as a premium subscriber!</div>
+<?php 	} else { ?>
+			<div class="alert alert-info" role="alert">You can use Advanced Fyxt RPG Powers. But if you want to create your own, <a href="../../fyxt-rpg-account/fyxt-rpg-member-levels/" title="Premium Fyxt RPB members can create Advanced Fyxt RPG Powers.">upgrade to a premium Fyxt RPB membership</a>!</div>
+<?php	} ?>           
+
+    <form id="frmPowerSearch" name="frmPowerSearch" method="get" action="">
+		
+		<div class="row-fluid" >
+			<div class="span2 cs_label">
+				Name
+			</div>
+			<div class="span2 cs_entry">
+				<span title="Enter all or some of the Name of the Power you are searching for."><input type="text" name="txbxPowerName" id="txbxPowerName" value="<?php echo $nameFilter ?>"/></span>
+			</div>
+			<div class="span2 cs_label">
+				Description
+			</div>
+			<div class="span2 cs_entry">
+				<span title="Enter some of the desired Power description here."><input type="text" name="txbxPowDesc" id="txbxPowDesc" value="<?php echo $descFilter ?>"/></span>
+			</div>
+			<div class="span2 cs_label">
+				Effects
+			</div>
+			<div class="span2">
+				<span title="Enter some or part of the Power effect you are searching for."><input name="txbxEffName" id="txbxEffName" type="text" /></span>
+			</div>
+		</div>
+		
+		<div class="row-fluid">
+			<div class="span2 cs_label">
+				Level
+			</div>
+			<div class="span2 cs_entry">
+				<span title="Enter the maximum level of the Powers to search for.">
+        		<select name="slctMaxLevel" id="slctMaxLevel" required>
+        <?php //create level options Currently at 26 Levels
+			$i = 1;
+			while ( $i <=26 ) {
+				echo '<option value="';
+				echo $i;
+				echo '"';
+				if ( $levelFilter == $i ) { echo ' selected="selected"'; }
+				echo '>'.$i.'</option>';
+				$i++;
+			}
+		?>
+        		</select>
+				</span>
+			</div>
+			<div class="span2 cs_label">
+				Discipline
+			</div>
+			<div class="span2 cs_entry">
+				<span title="Narrow the Power search to a specific Discipline.">
+        <select name="slctDisc" id="slctDisc">
+          <option value="" selected="selected">All</option>
+          <?php
+            $archeList = fyxt_BasicDisciplineList() ;
+			foreach( $archeList as $al ):
+	            echo '<option value="'.$al->fyxt_base_disc_name.'"'.( ( $archeFilter == $al->fyxt_base_disc_name ) ? ' selected="selected">' : '>' ).$al->fyxt_base_disc_name.'</option>'; 
+            endforeach;
+          ?>
+        </select></span>
+			</div>
+			<div class="span2 cs_label">
+				Aggression
+			</div>
+			<div class="span2 cs_entry">
+				<span title="Narrow the search by a specific aggression.">
+        		<select name="slctAgg" id="slctAgg">
+          			<option value=""<?php if ( $aggFilter == '' ) {echo ' selected="selected"';} ?>>All</option>
+          			<option value="Defensive"<?php if ( $aggFilter == 'Defensive' ) {echo ' selected="selected"';} ?>>Defensive</option>
+          			<option value="Offensive"<?php if ( $aggFilter == 'Offensive' ) {echo ' selected="selected"';} ?>>Offensive</option>
+        		</select>
+				</span>
+			</div>
+			
+		</div>
+		
+		<div class="row-fluid">
+			<div class="span1 cs_label" >
+				Cost
+			</div>
+			<div class="span2 cs_entry" >
+ 				<input name="nrbxLowPP" type="number" min="0" size="4" value="<?php echo $lCost ?>" title="Low end of Power Point Cost" />
+			</div>
+			<div class="span2 cs_entry" >
+				- <input name="nrbxHighPP" type="number" min="0" size="4" value="<?php echo $hCost ?>" title="High end of Power Point Cost" />
+			</div>
+			<div class="span1 cs_label">
+				Target
+			</div>
+			<div class="span2 cs_entry">
+				<span title="Select the amount of Targets for the Powers.">
+        		<select name="slctTT" id="slctTT">
+          <?php
+            $ttList = fyxt_tacticalTargetList ();
+			foreach( $ttList as $tl ):
+	            echo '<option value="'.$tl->fyxt_char_tactical_target_name.'"'.( ( $ttFilter == $tl->fyxt_char_tactical_target_name ) ? ' selected="selected">' : '>' ).$tl->fyxt_char_tactical_target_name.'</option>'; 
+            endforeach;
+          ?>
+        		</select></span>
+			</div>
+			<div class="span2 cs_label">
+				Range
+			</div>
+			<div class="span2 cs_entry">
+				<span title="Select the Range for the Powers.">
+        		<select name="slctTR" id="slctTR">
+          <?php
+          $trList = fyxt_tacticalRangeList ();
+			foreach( $trList as $rl ):
+	            echo '<option value="'.$rl->fyxt_char_tacticle_range_name.'"'.( ( $trFilter == $rl->fyxt_char_tacticle_range_name ) ? ' selected="selected">' : '>' ).$rl->fyxt_char_tacticle_range_name.'</option>'; 
+            endforeach;
+          ?>
+        		</select></span>
+			</div>
+			
+		</div>
+		
+<!-- Begin TAGS -->		
+		<div class="row-fluid">
+			<div class="span1 cs_label"><span title="Use tags to narrow your search." >Tags</span></div>
+			<div class="span5 cs_entry">
+				<div id="prefetch">
+					<input type="text" name="tags" id="inTags" placeholder="Enter Tags" class="tm-input tm-input-typeahead tm-tag-success" />
+					<p>Use only suggested tags. Start typing to begin...</p>
+				</div>
+			</div>
+			<div class="span6 cs_label">
+				<div id="divTagBox" ></div>
+			</div>
+		</div>		
+<!-- END TAGS -->		
+		
+<?php 
+		if( pmpro_hasMembershipLevel( array( 1,2,3,4,5,6 ) ) ) { // Restricts access at a code level ?>
+			<div class="cs_label">
+				<p><input name="btnFilterPowers" type="submit" id="btnFilterPowers" value="Find Fyxt RPG Powers" /></p>
+			</div>
+<?php } else { ?>
+			<div class="alert alert-info" role="alert">
+			  <h3>Search Disabled from Bots</h3>
+				Login or <a href="../../fyxt-rpg-account/fyxt-rpg-membership-checkout/?level=1" title="Create a Free Fyxt RPG Account">create a free Fyxt RPG account</a> to search the Power Database.
+			</div>
+<?php	} 
+?>
+		
+    <input name="charID" type="hidden" value="<?php echo $charID ?>" />
+    </form>
+</div>
+
+
+<?php 
+	if ( $charID > 0 ){ //outputs character power point stat block
+		$powerStats = fyxt_printPowerPointStats ( $charID );
+		echo $powerStats['htmlOutput']; 
+}
+	if ( ( isset( $_GET['charID'] ) ) || ( isset( $_GET['slctMaxLevel'] ) ) ) {
+		echo '<div class="char_stat_block_title" id="first_title">';
+		echo 'Results of Filtered Power Search';
+		echo '</div>';
+		echo '  '.$textline1.' | '.$textline2;
+		echo '<div id="first_block" class="char_stat_block">';
+
+		if ( $row > 100 ) {
+			echo '<div class="alert alert-info" role="alert">
+					  More than 200 Powers found. Try narrowing your search further.
+					</div>';
+		}
+		
+		if ( $row > $page_rows ) {
+			echo '<div id="pagination_controls">'.$paginationCtrls.'</div>';
+		}
+	} else {
+		echo '<div class="char_stat_block_title" id="first_title">';
+		echo 'Random Fyxt RPG Powers';
+		echo '</div>';
+		if ( is_user_logged_in() ) {
+			echo '  Use filters above to Search Powers';
+		}
+		echo '<div id="first_block" class="char_stat_block">';
+	}
+
+	echo '<div id="power_and_buttons_container">';
+
+	if ( empty( $powerListResults ) ) {  //if records come back empty
+		echo '<div class="alert alert-warning" role="alert">No Fyxt RPG Powers were found with your current filters. Try broading your choices.</div>';
+	} else {
+        foreach( $powerListResults as $pList ):
+/////////////////////////////// new power listing ////////////////////////		
+			$pListing = fyxt_printPower( $pList->idpowers, 3 ); //gets power data array
+			$pName = stripslashes( $pListing->pname );
+		
+			echo '<div class="powerCont" name="powerContainter'.$pList->idpowers.'" id="powerContainter'.$pList->idpowers.'">';
+				echo $pListing['htmlOutput']; //outputs preformatted div with power data
+/////////////////////////////// new power listing ////////////////////////		
+
+	echo '<span id="spnPowerMessage'.$pList->idpowers.'" name="spnPowerMessage'.$pList->idpowers.'" ></span>';
+
+	echo '<div id="g-btn">';
+			if ( ( $charID > 0 ) && ( $okToEdit == 1 ) && ( $tooManyPower == 0 ) ) {
+				echo '<input id="hdnPowerID" type="hidden" value="'.$pList->idpowers.'"/>
+					<button name="btnAddPower" id="btnAddPower" title="Add '.$pName.' as an At Will Power to '.$charName.'" value="A" >
+						<img class="im_checks" id="im_checks" src="../../wp-content/themes/ata-child-files/fyxt-custom/atwi_icon.png" alt="Add to At-Will Powers" />
+					</button>
+					<input id="hdnPowerID" type="hidden" value="'.$pList->idpowers.'"/>
+					<button name="btnAddPower" id="btnAddPower" title="Add '.$pName.' as a '.$priPowerName.' Power to '.$charName.'" value="1" >
+						<img class="im_checks" id="im_checks" src="../../wp-content/themes/ata-child-files/fyxt-custom/pri_icon.png" alt="Add to Primary Powers" />
+					</button>';
+				if ( $isNPC == 0 ) {
+					echo '<input id="hdnPowerID" type="hidden" value="'.$pList->idpowers.'"/>
+						  <button name="btnAddPower" id="btnAddPower" value="2" title="Add '.$pName.' as a Secondary Power to '.$charName.'">
+							<img class="im_checks" id="im_checks" src="../../wp-content/themes/ata-child-files/fyxt-custom/sec_icon.png" alt="Add to Secondary Powers" />
+						  </button>';
+	
+				}
+				if ( $basicCharInfo->char_focus != 2 && $isNPC == 0 ) {
+					echo '<input id="hdnPowerID" type="hidden" value="'.$pList->idpowers.'"/>
+						  <button name="btnAddPower" id="btnAddPower"  value="3" title="Add '.$pName.' as a Tertiary Power to '.$charName.'">
+							<img class="im_checks" id="im_checks" src="../../wp-content/themes/ata-child-files/fyxt-custom/ter_icon.png" alt="Add to Tertiary Powers" />
+						  </button>';
+				}
+			}
+			
+			echo '</div>'; //closes left side button
+			
+			echo '<div id="b-btn">';
+			if( pmpro_hasMembershipLevel( array(1,2,3,4,5,6 ) ) ) { // Restricts access at a code level	
+				$powerID = $pList->idpowers;
+				$userPowerOwned = fyxt_userOwnPower( $fyxtAccountID, $powerID );
+				if ( ( $isSuperMod == 1 ) || ( $userPowerOwned == 1 ) ) { // add a little edit code here so super mods can easily edit powers.
+					echo '<input id="hdnpowerID" type="hidden" value="'.$pList->idpowers.'"/>
+							<button name="btnEditPower" id="btnEditPower" value="e" title="Edit '.$pListing['name'].'">
+						  		<img class="im_checks" id="im_checks" src="../../wp-content/themes/ata-child-files/fyxt-custom/fyxt_edit_screen_icon.png" alt="Edit Fyxt RPG Power" />
+							</button>';
+				}
+			}
+		echo '</div>'; //closes right side button
+		
+		if  ( ( $charID > 0 ) && ( $okToEdit == 1 ) && ( $tooManyPower == 1 ) ) { //too many powers on character
+				echo '<div class="alert alert-warning" role="alert">'.$charName.' has reached the maximum amount of Powers they can have. <a href="../../fyxt-rpg-account/fyxt-rpg-member-levels/" title="Upgrade your subscription for more room per character.">Upgrade to Fyxt RPG account</a> or delete Powers on the character to make room. <a class="inline_a"  href="../../fyxt-rpg-tools/character-sheet/edit-powers/?charID='.$charID.'" title="Click here to edit your character\'s Powers.">Edit Character Powers</a>.</div>';
+			}
+		
+		echo '</div>'; //closes Power container
+
+        endforeach;
+//		echo '</div>'; //closes powers and buttons container.
+	}
+	if ( $row > $page_rows ) {
+			echo '<div id="pagination_controls">'.$paginationCtrls.'</div>';
+		} 
+?>  
+</div>
+ 
+</div>
+
+<a name="mycharacters" id="mycharacters"></a>
+<?php if ( ( $charCount > 0 ) && ( $fyxtAccountID > 0 ) ) { ?>
+  <div class="char_stat_block_title" id="first_title">Load Fyxt RPG Character</div> 
+          Click a character below to set filters for them.
+            <div id="first_block" class="char_stat_block">
+            <table width="100%" border="0">
+              <tr>
+                <td class="cs_label" id="cs_label" width="50%">Player Character(s)</td>
+                <td class="cs_label" id="cs_label" width="50%">NPC(s)</td>
+              </tr>
+              <tr>
+                <td class="cs_desc" id="cs_desc">
+				<?php
+					echo '<table width="100%">';
+					$i = 1;
+					foreach ( $myCharListResults as $pc ) {
+						if ( $i <= $charLimit ) { //ok to edit
+							echo '<tr><td class="cs_desc_chars" id="cs_desc_chars"><a href="../../fyxt-rpg-tools/fyxt-power-database-search/?charID='.$pc->idfyxt_character.'">'.stripslashes( $pc->character_name ).'</a></td></tr>';
+						}
+						else {
+						//too many PC
+							echo '<tr><td class="overLimit" id="overLimit">'.stripslashes( $pc->character_name ).'</td></tr>';
+						}
+						if ( ( $i > $charLimit ) && ( $i == $charCount ) ) {
+							echo '<tr><td class="overLimit" id="overLimit">Grayed out player characters exceed your Fyxt Account limit and can not be edited. 
+							Increase your <a href="../../fyxt-rpg-account/fyxt-rpg-member-levels/" title="Subscribe now to gain more access to Advanced Fyxt RPG player characters.">Fyxt RPG subscription</a>, contribute a completed PC to the Fyxt RPG, or delete a player character to make room on your account. 
+							Go to <a href="../../fyxt-rpg-tools/my-characters/" title="Go to your Fyxt RPG characters.">Fyxt RPG Characters</a> for more information.</td></tr>';
+						}
+						$i++;
+					}
+					echo '</table>';
+                				
+				?></td>
+                <td class="cs_desc" id="cs_desc">
+                <?php
+					//$npcList = npcCharList($fyxtAccountID);
+					echo '<table width="100%">';
+					$i = 1;
+					foreach ( $myNPCCharListResults as $npc ) {
+						if ( $i <= $npcLimit ) { //ok to edit
+							echo '<tr><td class="cs_desc_chars" id="cs_desc_chars"><a href="../../fyxt-rpg-tools/fyxt-power-database-search/?charID='.$npc->idfyxt_character.'">'.stripslashes( $npc->character_name ).'</a></td></tr>';
+						} else {
+						//too many PC
+							echo '<tr><td class="overLimit" id="overLimit">'.stripslashes( $npc->character_name ).'</td></tr>';
+						}
+						if ( ( $i > $npcLimit ) && ( $i == $npcCount ) ) {
+							echo '<tr><td class="overLimit" id="overLimit">Grayed out non player characters exceed your Fyxt Account limit and can not be edited. 
+							Increase your <a href="../../fyxt-rpg-account/fyxt-rpg-member-levels/" title="Subscribe now to gain more access to Advanced Fyxt RPG non player characters.">Fyxt RPG subscription</a>, contribute a completed NPC to the Fyxt RPG, or delete a non player character to make room on your account. 
+							Go to <a href="../../fyxt-rpg-tools/my-characters/" title="Go to your Fyxt RPG characters.">Fyxt RPG Characters</a> for more information.</td></tr>';
+						}
+						$i++;
+					}
+					echo '</table>';
+                				
+				?></td>
+              </tr>
+            </table>
+</div>
+<?php } // closes if there are chars on this account
+	  elseif ( $fyxtAccountID > 0 ) { ?>
+            <div class="post-bodycopy clearfix">
+                It doesn't appear that you have any characters created to be able to add Fyxt RPG Powers to. 
+                <a href="../../fyxt-rpg-tools/my-characters/create-new-character/">Create a new Fyxt RPG player character</a> then you can add items and gear to it.
+            </div>
+<?php } //closes else that shows link to creating a new character ?>
+
+<script type="text/javascript">
+	
+	jQuery( ".tm-input" ).tagsManager({
+        prefilled: ["<?php echo $existingTags ?>"],
+		blinkBGColor_1: '#FFFF9C',
+        blinkBGColor_2: '#CDE69C',
+        maxTags: 5,
+		tagsContainer: "#divTagBox"
+    });
+	
+</script>
+
+<?php
+$sqlJSON = "
+	SELECT DISTINCT
+	  fyxt_tax_list.tax_term
+	FROM
+	  fyxt_tax_list
+	ORDER BY
+	  fyxt_tax_list.tax_term";
+$resultJSON = $wpdb->get_col( $sqlJSON );
+?>
+
+<script>
+jQuery( document ).ready( function( $ ) {	  
+  $( function() {
+    var availableTags = <?php echo json_encode( $resultJSON ); ?>;
+    $( "#inTags" ).autocomplete({
+      source: availableTags
+    });
+  });
+});
+</script>
+
+		
+<!-- END ----------------------------------------------------------------------------------------------------------------------------- Page stuff afer Post Text -->
+
+
+                                <?php do_action ('__after_article') ?>
+
+                            <?php endwhile; ?>
+
+                        <?php endif; ##end if have posts ?>
+
+                    <?php do_action ('__after_loop');##hook of the comments and the posts navigation with priorities 10 and 20 ?>
+
+                </div><!--.article-container -->
+
+           <?php do_action( '__after_article_container'); ##hook of left sidebar ?>
+
+        </div><!--.row -->
+    </div><!-- .container role: main -->
+
+    <?php do_action( '__after_main_container' ); ?>
+
+</div><!--#main-wrapper"-->
+
+<?php do_action( '__after_main_wrapper' );##hook of the footer with get_footer ?>
